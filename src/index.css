@@ -1,1 +1,8 @@
+/* Base styles are handled by GlobalStyles.js */
+/* This file is kept as a minimal entry point for global styles */
 
+html, body {
+  margin: 0;
+  padding: 0;
+  background-color: #120030;
+}
