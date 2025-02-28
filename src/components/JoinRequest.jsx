@@ -1,276 +1,202 @@
-import React, { useState } from 'react';
-import styled from 'styled-components';
+import React, { useEffect, useState } from 'react';
+import styled, { keyframes } from 'styled-components';
 import { theme } from '../styles/theme';
+import RetroModal from './UI/RetroModal';
 import Button from './UI/Button';
-import PixelatedInput from './UI/PixelatedInput';
-import NeonBorder from './UI/NeonBorder';
 import GlitchText from './UI/GlitchText';
 import { supabase } from '../utils/supabaseClient';
 
-const JoinRoomContainer = styled(NeonBorder)`
-  max-width: 500px;
-  margin: 0 auto;
-  padding: 2rem;
+const blinkAnimation = keyframes`
+  0%, 49% {
+    opacity: 1;
+  }
+  50%, 100% {
+    opacity: 0.7;
+  }
 `;
 
-const Title = styled.h2`
-  text-align: center;
-  margin-bottom: 2rem;
+const Container = styled.div`
+  margin-bottom: 1rem;
 `;
 
-const Form = styled.form`
-  display: flex;
-  flex-direction: column;
-  gap: 1.5rem;
+const NotificationBadge = styled.div`
+  position: fixed;
+  top: 1rem;
+  right: 1rem;
+  background-color: ${theme.colors.pink};
+  color: ${theme.colors.black};
+  font-weight: bold;
+  padding: 0.5rem 1rem;
+  border-radius: 2px;
+  z-index: 1000;
+  cursor: pointer;
+  animation: ${blinkAnimation} 1s infinite;
+  
+  &:hover {
+    animation: none;
+    background-color: ${theme.colors.lime};
+  }
 `;
 
-const ButtonContainer = styled.div`
+const RequestItem = styled.div`
+  margin-bottom: 1rem;
+  padding: 1rem;
+  background-color: ${theme.colors.darkPurple}90;
+  border-left: 2px solid ${theme.colors.yellow};
+`;
+
+const RequestInfo = styled.div`
+  margin-bottom: 1rem;
+`;
+
+const Username = styled.div`
+  font-size: 1.2rem;
+  color: ${theme.colors.cyan};
+  margin-bottom: 0.5rem;
+`;
+
+const Timestamp = styled.div`
+  font-size: 0.8rem;
+  color: ${theme.colors.white}70;
+`;
+
+const ActionButtons = styled.div`
   display: flex;
   gap: 1rem;
-  margin-top: 1rem;
 `;
 
-const StatusMessage = styled.div`
-  margin-top: 1.5rem;
-  padding: 1rem;
-  text-align: center;
-  border: 2px solid ${props => 
-    props.status === 'success' ? theme.colors.lime : 
-    props.status === 'error' ? theme.colors.orange : 
-    theme.colors.cyan};
-  color: ${props => 
-    props.status === 'success' ? theme.colors.lime : 
-    props.status === 'error' ? theme.colors.orange : 
-    theme.colors.cyan};
-  background-color: ${theme.colors.darkPurple}90;
-`;
-
-const JoinRoom = ({ onRoomJoined, onBack }) => {
-  const [roomCode, setRoomCode] = useState('');
-  const [username, setUsername] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
-  const [statusMessage, setStatusMessage] = useState(null);
-  const [statusType, setStatusType] = useState(null);
-  const [userId, setUserId] = useState(null);
-  const [isCheckingStatus, setIsCheckingStatus] = useState(false);
-  const [roomName, setRoomName] = useState('');
+const JoinRequest = ({ roomCode, hostId }) => {
+  const [requests, setRequests] = useState([]);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [hasNewRequests, setHasNewRequests] = useState(false);
   
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    
-    if (!roomCode.trim() || !username.trim()) {
-      setStatusMessage('Please fill in all fields');
-      setStatusType('error');
-      return;
-    }
-    
-    try {
-      setIsLoading(true);
-      setStatusMessage(null);
-      setStatusType(null);
-      
-      // Check if room exists
-      const { data: roomData, error: roomError } = await supabase
-        .from('rooms')
-        .select('room_name')
-        .eq('room_code', roomCode.toUpperCase())
-        .single();
-        
-      if (roomError || !roomData) {
-        setStatusMessage('Room not found. Please check the room code.');
-        setStatusType('error');
-        return;
-      }
-      
-      setRoomName(roomData.room_name);
-      
-      // Generate user ID
-      const generatedUserId = crypto.randomUUID();
-      setUserId(generatedUserId);
-      
-      // Create join request
-      const { error: requestError } = await supabase
-        .from('join_requests')
-        .insert([
-          {
-            room_code: roomCode.toUpperCase(),
-            user_id: generatedUserId,
-            username: username
-          }
-        ]);
-        
-      if (requestError) throw requestError;
-      
-      setStatusMessage('Join request sent. Waiting for host approval...');
-      setStatusType('pending');
-      setIsCheckingStatus(true);
-      
-      // Start checking for approval
-      checkJoinStatus(roomCode.toUpperCase(), generatedUserId);
-      
-    } catch (error) {
-      console.error('Error joining room:', error);
-      setStatusMessage('Failed to send join request. Please try again.');
-      setStatusType('error');
-    } finally {
-      setIsLoading(false);
-    }
-  };
-  
-  const checkJoinStatus = async (roomCode, userId) => {
-    try {
-      // Subscribe to changes in join request status
-      const joinRequestSubscription = supabase
-        .channel(`join-request-${userId}`)
-        .on('postgres_changes', 
-          { event: 'UPDATE', schema: 'public', table: 'join_requests', filter: `user_id=eq.${userId}` }, 
-          async (payload) => {
-            if (payload.new.status === 'accepted') {
-              // Add user to room
-              const { error: joinError } = await supabase
-                .from('room_users')
-                .insert([
-                  {
-                    room_code: roomCode,
-                    user_id: userId,
-                    username: username
-                  }
-                ]);
-                
-              if (joinError) throw joinError;
-              
-              setStatusMessage('Join request accepted! Entering room...');
-              setStatusType('success');
-              
-              // Wait a moment for visual feedback
-              setTimeout(() => {
-                if (onRoomJoined) {
-                  onRoomJoined({
-                    roomCode,
-                    roomName,
-                    userId,
-                    username,
-                    isHost: false
-                  });
-                }
-              }, 1500);
-              
-            } else if (payload.new.status === 'rejected') {
-              setStatusMessage('Join request rejected by host.');
-              setStatusType('error');
-              setIsCheckingStatus(false);
-            }
-          }
-        )
-        .subscribe();
-      
-      // Cleanup function to unsubscribe when component unmounts
-      return () => {
-        joinRequestSubscription.unsubscribe();
-      };
-      
-    } catch (error) {
-      console.error('Error checking join status:', error);
-      setStatusMessage('Error checking join status. Please try again.');
-      setStatusType('error');
-      setIsCheckingStatus(false);
-    }
-  };
-  
-  const handleCancel = async () => {
-    if (userId && isCheckingStatus) {
+  useEffect(() => {
+    // Fetch existing join requests
+    const fetchRequests = async () => {
       try {
-        // Delete join request
-        const { error } = await supabase
+        const { data, error } = await supabase
           .from('join_requests')
-          .delete()
-          .eq('user_id', userId);
+          .select('*')
+          .eq('room_code', roomCode)
+          .eq('status', 'pending')
+          .order('created_at', { ascending: false });
           
         if (error) throw error;
         
+        setRequests(data || []);
+        setHasNewRequests(data?.length > 0);
+        
       } catch (error) {
-        console.error('Error cancelling join request:', error);
+        console.error('Error fetching join requests:', error);
       }
-    }
+    };
     
-    setIsCheckingStatus(false);
-    setStatusMessage(null);
-    setStatusType(null);
+    fetchRequests();
+    
+    // Subscribe to new join requests
+    const joinRequestsSubscription = supabase
+      .channel(`room:${roomCode}:join_requests`)
+      .on('postgres_changes', 
+        { event: 'INSERT', schema: 'public', table: 'join_requests', filter: `room_code=eq.${roomCode}` }, 
+        payload => {
+          setRequests(prev => [payload.new, ...prev]);
+          setHasNewRequests(true);
+        }
+      )
+      .on('postgres_changes', 
+        { event: 'UPDATE', schema: 'public', table: 'join_requests', filter: `room_code=eq.${roomCode}` }, 
+        payload => {
+          setRequests(prev => 
+            prev.filter(req => req.id !== payload.new.id)
+          );
+        }
+      )
+      .subscribe();
+      
+    // Cleanup on unmount
+    return () => {
+      joinRequestsSubscription.unsubscribe();
+    };
+    
+  }, [roomCode]);
+  
+  const handleAction = async (requestId, action) => {
+    try {
+      const { error } = await supabase
+        .from('join_requests')
+        .update({ status: action })
+        .eq('id', requestId);
+        
+      if (error) throw error;
+      
+      // Update local state
+      setRequests(prev => prev.filter(req => req.id !== requestId));
+      
+      if (requests.length <= 1) {
+        setHasNewRequests(false);
+      }
+      
+    } catch (error) {
+      console.error(`Error ${action} join request:`, error);
+    }
+  };
+  
+  const formatTime = (timestamp) => {
+    const date = new Date(timestamp);
+    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   };
   
   return (
-    <JoinRoomContainer color={theme.colors.cyan} pulse>
-      <Title>
-        <GlitchText fontSize="1.8rem" glow>JOIN A CHATROOM</GlitchText>
-      </Title>
+    <Container>
+      {hasNewRequests && !isModalOpen && (
+        <NotificationBadge onClick={() => setIsModalOpen(true)}>
+          {requests.length} Pending Request{requests.length !== 1 ? 's' : ''}
+        </NotificationBadge>
+      )}
       
-      <Form onSubmit={handleSubmit}>
-        <PixelatedInput
-          label="ROOM CODE"
-          name="roomCode"
-          placeholder="Enter 5-digit room code..."
-          value={roomCode}
-          onChange={(e) => setRoomCode(e.target.value.toUpperCase())}
-          maxLength={5}
-          required
-          disabled={isCheckingStatus}
-        />
-        
-        <PixelatedInput
-          label="YOUR NAME"
-          name="username"
-          placeholder="Enter your username..."
-          value={username}
-          onChange={(e) => setUsername(e.target.value)}
-          maxLength={50}
-          required
-          disabled={isCheckingStatus}
-        />
-        
-        {statusMessage && (
-          <StatusMessage status={statusType}>
-            <GlitchText glow={statusType === 'success'} static={statusType === 'error'}>
-              {statusMessage}
-            </GlitchText>
-          </StatusMessage>
+      <RetroModal
+        isOpen={isModalOpen}
+        onClose={() => setIsModalOpen(false)}
+        title="JOIN REQUESTS"
+        width="450px"
+        color={theme.colors.yellow}
+      >
+        {requests.length === 0 ? (
+          <div style={{ textAlign: 'center', padding: '1rem' }}>
+            <GlitchText>No pending requests</GlitchText>
+          </div>
+        ) : (
+          requests.map(request => (
+            <RequestItem key={request.id}>
+              <RequestInfo>
+                <Username>
+                  <GlitchText glow>{request.username}</GlitchText>
+                </Username>
+                <Timestamp>
+                  Request time: {formatTime(request.created_at)}
+                </Timestamp>
+              </RequestInfo>
+              
+              <ActionButtons>
+                <Button
+                  variant="danger"
+                  onClick={() => handleAction(request.id, 'rejected')}
+                >
+                  REJECT
+                </Button>
+                <Button
+                  variant="success"
+                  onClick={() => handleAction(request.id, 'accepted')}
+                >
+                  ACCEPT
+                </Button>
+              </ActionButtons>
+            </RequestItem>
+          ))
         )}
-        
-        <ButtonContainer>
-          {isCheckingStatus ? (
-            <>
-              <Button 
-                type="button" 
-                variant="danger" 
-                onClick={handleCancel}
-                fullWidth
-              >
-                CANCEL
-              </Button>
-            </>
-          ) : (
-            <>
-              <Button 
-                type="button" 
-                variant="secondary" 
-                onClick={onBack}
-                fullWidth
-              >
-                BACK
-              </Button>
-              <Button 
-                type="submit" 
-                variant="primary" 
-                disabled={isLoading}
-                fullWidth
-              >
-                {isLoading ? 'CONNECTING...' : 'JOIN ROOM'}
-              </Button>
-            </>
-          )}
-        </ButtonContainer>
-      </Form>
-    </JoinRoomContainer>
+      </RetroModal>
+    </Container>
   );
 };
 
-export default JoinRoom;
+export default JoinRequest;
